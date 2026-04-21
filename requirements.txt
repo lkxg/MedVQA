@@ -30,7 +30,7 @@ pandas>=2.2.0
 numpy>=1.26.0
 
 # ==================== 【5. 评估指标专用】 ====================
-openai>=1.50.0                # GPT-4o-as-a-Judge 语义评分
+openai>=1.50.0                # GPT-5-as-a-Judge 语义评分
 scikit-learn>=1.5.0           # 用于计算 Precision/Recall/F1（可选）
 Pillow>=10.4.0                # 图像处理
 

@@ -12,11 +12,13 @@ from pathlib import Path
 # ====================== 配置区 ======================
 MODEL_CONFIG = {
     "qwen3.5-9b": {
-        "repo_id": "Qwen/Qwen3.5-9B",    
+        "repo_id": "Qwen/Qwen3.5-9B",
+        "save_dirname": "Qwen3.5-9B",
         "description": "Qwen3.5-9B (9B 原生多模态)",
     },
     "gemma-4-e4b": {
         "repo_id": "google/gemma-4-E4B-it",
+        "save_dirname": "gemma-4-E4B-it",
         "description": "Gemma-4-E4B-IT (边缘优化多模态)",
     },
 }
@@ -87,7 +89,7 @@ def main():
 
     for model_key in models_to_download:
         config = MODEL_CONFIG[model_key]
-        save_dir = output_path / model_key.replace(".", "-")
+        save_dir = output_path / config["save_dirname"]
         download_model(config["repo_id"], str(save_dir), args.hf_token)
 
     print("🎉 所有模型下载完成！")
