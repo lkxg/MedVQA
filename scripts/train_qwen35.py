@@ -7,6 +7,7 @@ from typing import Dict, Any
 
 from datasets import load_from_disk
 from trl import SFTTrainer, SFTConfig
+from transformers import EarlyStoppingCallback, set_seed
 from unsloth import FastVisionModel, is_bfloat16_supported
 from unsloth.trainer import UnslothVisionDataCollator
 
@@ -51,18 +52,18 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=1, help="每个设备的训练批量大小")
     parser.add_argument("--eval_batch_size", type=int, default=1, help="每个设备的评估批量大小")
     parser.add_argument("--grad_accum", type=int, default=8, help="梯度累积步数")
-    parser.add_argument("--epochs", type=int, default=4, help="训练轮数 (epochs)")
+    parser.add_argument("--epochs", type=int, default=2, help="训练轮数 (epochs)")
     parser.add_argument("--max_steps", type=int, default=-1, help="最大训练步数（-1 表示使用 epochs）")
-    parser.add_argument("--warmup_steps", type=int, default=10, help="预热步数 (warmup steps)")
+    parser.add_argument("--warmup_ratio", type=float, default=0.03, help="预热比例 (warmup ratio)")
     parser.add_argument("--learning_rate", type=float, default=2e-4, help="峰值学习率")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="优化器的权重衰减 (weight decay)")
-    parser.add_argument("--logging_steps", type=int, default=10, help="日志记录的步数间隔")
+    parser.add_argument("--logging_steps", type=int, default=50, help="日志记录的步数间隔")
     parser.add_argument("--save_total_limit", type=int, default=2, help="保存的检查点 (checkpoints) 最大数量")
     parser.add_argument("--max_seq_length", type=int, default=1024, help="序列的最大上下文长度")
     parser.add_argument("--seed", type=int, default=3407, help="控制可重复性的随机种子")
 
     # 额外选项
-    parser.add_argument("--load_in_4bit", action="store_true", default=False, help="启用 4-bit 量化")
+    parser.add_argument("--load_in_4bit", action="store_true", default=True, help="启用 4-bit 量化")
     parser.add_argument("--no_load_in_4bit", action="store_true", help="禁用 4-bit 量化")
     parser.add_argument("--run_name", type=str, default=None, help="当前训练运行的自定义名称")
 
@@ -215,6 +216,9 @@ def maybe_init_wandb(args, run_name: str) -> str:
 def main():
     args = parse_args()
 
+    # 设置全局随机种子确保可重复性
+    set_seed(args.seed)
+
     # 如果有明确指定，则无条件禁用 4-bit 模型加载重定向
     if args.no_load_in_4bit:
         args.load_in_4bit = False
@@ -271,11 +275,12 @@ def main():
         data_collator=data_collator,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
         args=SFTConfig(
             per_device_train_batch_size=args.batch_size,
             per_device_eval_batch_size=args.eval_batch_size,
             gradient_accumulation_steps=args.grad_accum,
-            warmup_steps=args.warmup_steps,
+            warmup_ratio=args.warmup_ratio,
             num_train_epochs=args.epochs,
             max_steps=args.max_steps,
             learning_rate=args.learning_rate,
