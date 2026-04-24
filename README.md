@@ -1,186 +1,197 @@
-# MedVQA-PEFT: 参数高效微调在医疗视觉问答中的对比研究
+# MedVQA-PEFT: A Comparative Study of Parameter-Efficient Fine-Tuning for Medical Visual Question Answering
+
+[English](README.md) | [简体中文](README.zh.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Unsloth](https://img.shields.io/badge/Unsloth-2026-orange.svg)](https://github.com/unslothai/unsloth)
 [![HuggingFace](https://img.shields.io/badge/HuggingFace-Models-blue.svg)](https://huggingface.co)
 
-## 📖 项目简介
+## Project Overview
 
-随着大型多模态模型（MLLMs）在医学影像理解中的突破，其高昂的部署与微调成本成为了在真实临床环境中落地的主要阻碍。本项目（**MedVQA-PEFT**）旨在提供一个可复现的实证评估基准：**在硬件受限（≤24GB VRAM）的模拟临床环境中，哪种参数高效微调（PEFT）策略能在 Med-VQA 任务上实现更高性能与更低幻觉率。**
+Large multimodal language models (MLLMs) have significantly advanced medical image understanding, but deployment and fine-tuning costs remain a major barrier in real clinical settings. This project, **MedVQA-PEFT**, provides a reproducible benchmark to answer a practical question:
 
-我们使用两种原生多模态模型（Qwen3.5-9B 与 Gemma-4-E4B-IT），系统对比三种前沿 PEFT 方法：**LoRA、DoRA、PiSSA**，并构建了包含 **Med-POPE 幻觉探针** 与 **GPT-5 语义裁判** 的多维评估体系。
+**Under constrained hardware (<= 24GB VRAM), which parameter-efficient fine-tuning (PEFT) strategy achieves stronger Med-VQA performance with lower hallucination rates?**
 
-**核心目标**：为资源受限的临床环境提供高性能、低幻觉、可边缘部署的 Med-VQA 方案。
+We evaluate two natively multimodal base models (Qwen3.5-9B and Gemma-4-E4B-IT) across three PEFT methods: **LoRA, DoRA, and PiSSA**. The evaluation protocol combines a **Med-POPE hallucination probe** and **GPT-5 semantic judging** for multi-dimensional analysis.
 
-### 主要贡献
+Core objective: deliver high-accuracy, low-hallucination, deployment-ready Med-VQA solutions for resource-limited clinical environments.
 
-- 在 Med-VQA 场景中系统比较 **LoRA / DoRA / PiSSA** 三种 PEFT 路线。
-- 构建多维评估体系：封闭式（Accuracy + POPE 幻觉率）+ 开放式（Keyword Recall + GPT-5-as-a-Judge）+ 部署效率指标。
-- 支持小样本后测（few-shot / zero-shot）以模拟跨数据集、跨医院泛化。
-- 目标硬件为单卡 4090（24GB），强调可复现与部署可行性。
+### Key Contributions
 
-## 🆚 架构对比：适配器式 VL vs 原生多模态
+- Systematic PEFT comparison for Med-VQA: **LoRA / DoRA / PiSSA**.
+- Multi-dimensional evaluation: closed-set (Accuracy + POPE hallucination rate), open-set (Keyword Recall + GPT-5-as-a-Judge), and deployment efficiency metrics.
+- Cross-dataset generalization tests under zero-shot and few-shot settings.
+- Reproducible single-GPU target setup (RTX 4090, 24GB VRAM).
 
-业内多模态大模型大致可分为两类架构范式。本项目刻意选择**原生多模态模型**（Qwen3.5 / Gemma-4）作为评测底座，以下对比说明选型动机。
+## Architecture Choice: Adapter-Style VL vs Natively Multimodal
 
-### 适配器式 VL 模型（Late-Fusion / Bolt-on Vision）
+Modern multimodal models generally follow two architecture paradigms. This project intentionally uses **natively multimodal models** (Qwen3.5 / Gemma-4) as backbones.
 
-**代表**：LLaVA 系列、Qwen-VL / Qwen2-VL / Qwen3-VL、LLaMA-3.2-Vision、MiniGPT-4、InstructBLIP
+### Adapter-Style VL Models (Late Fusion / Bolt-on Vision)
 
-- **架构**：`预训练视觉编码器 (CLIP / SigLIP ViT) + 投影层 (MLP 或 Cross-Attention) + 预训练 LLM`
-- **训练**：两阶段 —— (1) 图文对齐预训练（冻结 LLM，只训投影层）；(2) 视觉指令微调
-- **模态融合**：视觉 token 经投影后拼接到文本序列前端，融合发生在 LLM 推理时
-- **优点**：模块化强、可替换视觉编码器、可复用强力预训练 LLM
-- **缺点**：存在模态对齐 gap、视觉 token 占用长上下文、细粒度空间推理相对较弱
+Examples: LLaVA family, Qwen-VL / Qwen2-VL / Qwen3-VL, LLaMA-3.2-Vision, MiniGPT-4, InstructBLIP
 
-### 原生多模态模型（Natively Multimodal / Early-Fusion）
+- Architecture: `pretrained vision encoder (CLIP / SigLIP ViT) + projection layer (MLP or cross-attention) + pretrained LLM`
+- Training: two-stage alignment, then visual instruction tuning
+- Fusion: image tokens are projected and prepended to text tokens at input time
+- Pros: modular design, easy vision encoder replacement, strong LLM reuse
+- Cons: modality alignment gap, longer context pressure from visual tokens, weaker fine-grained spatial reasoning
 
-**代表**：Qwen3.5、Gemma-4、Gemini、GPT-4o
+### Natively Multimodal Models (Early Fusion)
 
-- **架构**：统一 Transformer 栈从预训练起就同时处理视觉与文本 token（共享 tokenizer 或联合 embedding 空间）
-- **训练**：预训练全程混合图像–文本–视频数据，无显式对齐阶段
-- **模态融合**：图像 patch 与文本 token 在每一层都深度交互（Early Fusion）
-- **优点**：跨模态表征更统一、小参数量下仍具竞争力、细粒度视觉问答能力更强
-- **缺点**：不便替换视觉子模块、从零预训练成本高
+Examples: Qwen3.5, Gemma-4, Gemini, GPT-4o
 
-### 对比速览
+- Architecture: a unified Transformer stack jointly processes visual and text tokens from pretraining onward
+- Training: mixed image-text-video pretraining without an explicit separate alignment phase
+- Fusion: deep cross-modal interaction at every layer
+- Pros: more unified representations, better parameter efficiency (especially smaller models), stronger fine-grained VQA behavior
+- Cons: less modularity for swapping vision subcomponents, higher pretraining cost from scratch
 
-| 维度 | 适配器式 VL | 原生多模态 |
+### Quick Comparison
+
+| Dimension | Adapter-Style VL | Natively Multimodal |
 |---|---|---|
-| 架构耦合 | 视觉+LLM 可拆分 | 端到端统一栈 |
-| 对齐阶段 | 必须，易成瓶颈 | 预训练即对齐 |
-| 视觉–语言交互 | 浅层（输入端） | 深层（全层级） |
-| 参数效率 | 相对较低 | 更高（尤其小模型） |
-| 幻觉表现 | 模态 gap → 易幻觉 | 联合建模 → 相对可控 |
-| 边缘部署 | 视觉编码器常为瓶颈 | 整体更紧凑 |
-| 代表 | LLaVA, Qwen3-VL, LLaMA-3.2-V | **Qwen3.5, Gemma-4** |
+| Coupling | Vision + LLM are separable | End-to-end unified stack |
+| Alignment | Mandatory and often a bottleneck | Learned during pretraining |
+| Vision-language interaction | Shallow (input-side) | Deep (full-stack) |
+| Parameter efficiency | Lower in practice | Higher, especially for compact models |
+| Hallucination tendency | Modality gap can increase hallucinations | Joint modeling tends to improve control |
+| Edge deployment | Vision encoder can dominate cost | More compact end-to-end profile |
+| Typical examples | LLaVA, Qwen3-VL, LLaMA-3.2-V | **Qwen3.5, Gemma-4** |
 
-**选型动机**：医疗影像问答对细粒度视觉推理与幻觉控制要求极高，原生多模态的深层融合特性契合该需求；同时 Gemma-4-E4B 体积小、适合 24GB 单卡训练与边缘落地，构成“性能 + 部署”双基线。
+Motivation: medical VQA requires robust fine-grained visual reasoning and hallucination control. Natively multimodal models are better aligned with these requirements while remaining feasible on a single 24GB GPU.
 
-## 🧬 模型详情
+## Model Details
 
-### 1. Qwen3.5-9B（主打性能）
+### 1) Qwen3.5-9B (Performance-Oriented)
 
-- **HuggingFace**：`Qwen/Qwen3.5-9B`
-- **发布日期**：2026-03-02（9B Dense 变体；Qwen3.5 主系列 2026-02-16 首发）
-- **参数规模**：9B（Dense）
-- **架构亮点**：Hybrid **Gated DeltaNet + Gated Attention**；原生多模态 Early Fusion，预训练使用 trillions 级交错图–文–视频 token；与 Qwen-VL / Qwen2-VL / Qwen3-VL 的 late-fusion 路线形成代际切换
-- **上下文长度**：原生 262K，RoPE 可扩展至 1M+
-- **特点**：细粒度视觉–文本联合推理能力强，OCR / 图表 / 空间推理表现突出
-- **适用**：追求更高准确率与更低幻觉率的场景
+- Hugging Face: `Qwen/Qwen3.5-9B`
+- Release: 2026-03-02 (9B Dense variant; Qwen3.5 family initial release 2026-02-16)
+- Parameters: 9B (Dense)
+- Highlights: hybrid **Gated DeltaNet + Gated Attention**; native early-fusion multimodality
+- Context length: native 262K, RoPE-extended beyond 1M
+- Strengths: strong joint visual-text reasoning, OCR/chart/spatial tasks
+- Best fit: scenarios prioritizing top accuracy and reduced hallucinations
 
-### 2. Gemma-4-E4B-IT（主打边缘部署）
+### 2) Gemma-4-E4B-IT (Deployment-Oriented)
 
-- **HuggingFace**：`google/gemma-4-E4B-it`（Instruction-Tuned；Base 仓库为 `google/gemma-4-E4B`）
-- **发布日期**：2026-04-02（Apache 2.0）
-- **参数规模**：**4B effective active parameters（E = Effective）** —— 推理时实际激活约 4B，借助 Per-Layer Embeddings 压缩静态显存
-- **架构亮点**：**Per-Layer Embeddings (PLE)** + 交替局部滑窗 / 全局注意力；原生支持 text / image / video，**E4B 额外原生支持 audio 输入**（无需独立 STT）
-- **上下文长度**：128K
-- **特点**：显存占用低、推理速度快，支持可配置视觉 token 预算（70–1120 tokens/image）在细节与速度间折中
-- **适用**：强调实际部署效率与跨模态覆盖的场景
+- Hugging Face: `google/gemma-4-E4B-it` (instruction-tuned); base repo `google/gemma-4-E4B`
+- Release: 2026-04-02 (Apache 2.0)
+- Parameters: **4B effective active parameters** (E = Effective)
+- Highlights: **Per-Layer Embeddings (PLE)** + alternating local/global attention; native support for text/image/video, and audio input for E4B
+- Context length: 128K
+- Strengths: low memory footprint, faster inference, configurable visual token budget (70-1120 tokens/image)
+- Best fit: deployment efficiency and broad multimodal coverage
 
-## 🔧 PEFT 方法
+## PEFT Methods
 
-| 方法 | 全称 | 核心思路 | 推荐 rank | 显存优势 | 适用场景 |
+| Method | Full Name | Core Idea | Recommended Rank | Memory Advantage | Typical Use |
 |---|---|---|---|---|---|
-| LoRA | Low-Rank Adaptation | 经典低秩适配基线 | 16 | 中 | 稳定对照组 |
-| DoRA | Weight-Decomposed LoRA | 权重分解为幅度与方向，重点优化方向 | 16 | 优秀 | 性能优先 |
-| PiSSA | Principal Singular-value Adaptation | 基于主奇异向量初始化/适配，参数效率高 | 16 | 优秀 | 参数压缩优先 |
+| LoRA | Low-Rank Adaptation | Classic low-rank adaptation baseline | 16 | Medium | Stable reference baseline |
+| DoRA | Weight-Decomposed LoRA | Decompose weight into magnitude and direction; optimize direction more explicitly | 16 | High | Performance-first |
+| PiSSA | Principal Singular-value Adaptation | Principal singular-vector guided initialization/adaptation | 16 | High | Parameter-compression priority |
 
-**统一超参建议（默认）**：
+Default hyperparameters:
 
 - `rank=16`, `lora_alpha=32`, `lora_dropout=0.05`
-- `target_modules`：`q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`（attention + MLP 全部投影层；原生多模态视觉与文本共享统一栈、无独立投影层，具体模块名因模型而异，以 `configs/qwen3_5.yaml` 和 `configs/gemma_4.yaml` 为准）
-- 训练超参：
+- `target_modules`: `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`
+- Training defaults:
   - `per_device_train_batch_size=1`
-  - `gradient_accumulation_steps=8`（等效 batch size=8）
-  - `learning_rate=2e-4`（可在 `1e-4 ~ 2e-4` 内调优）
+  - `gradient_accumulation_steps=8` (effective batch size = 8)
+  - `learning_rate=2e-4` (usually tuned in `1e-4 ~ 2e-4`)
   - `optimizer=paged_adamw_32bit`
-  - 混合精度：`fp16/bf16`
+  - mixed precision: `fp16` or `bf16`
 
-> **显存优化**：默认采用 BitsAndBytes 的 NF4 4-bit 量化（可配合 double quantization + bf16 计算），用于降低静态显存占用。
+Memory optimization: NF4 4-bit quantization via BitsAndBytes is enabled by default (optionally with double quantization and bf16 compute) to reduce static VRAM usage.
 
-## 📚 数据集
+## Datasets
 
-### 主实验（In-domain 训练 + 测试）
+### In-Domain Main Experiments
 
-- **VQA-RAD**：314 张放射学影像，2244 个 QA 对
-- **SLAKE-VQA**：642 张多模态医学影像，7033 个 QA 对
+- **VQA-RAD**: 314 radiology images, 2244 QA pairs
+- **SLAKE-VQA**: 642 medical images, 7033 QA pairs
 
-### 跨数据集泛化测试（Out-of-domain, Zero-/Few-shot）
+### Out-of-Domain Generalization
 
-- **PMC-VQA-test-clean**：来自 PubMed Central 文献插图的大规模医学 VQA 测试集（清洗版），涵盖更广的影像模态与科室，用于评估主实验模型在未见分布上的泛化与幻觉表现。模型**完全不在 PMC-VQA 上训练**，仅做 zero-shot / few-shot 推理。
+- **PMC-VQA-test-clean**: a cleaned subset from PMC-VQA with broader modalities and specialties for zero-shot/few-shot transfer evaluation
 
-**题型策略（Stratified Pipeline）**：
+Important: models are **not trained on PMC-VQA**. It is only used for zero-shot/few-shot inference.
 
-- 训练/验证阶段：封闭式（Yes/No）与开放式（Open-ended）混合训练
-- 测试阶段：按题型自动分流为 Closed-set / Open-set 分别评估
+### Stratified QA Pipeline
 
-**下载链接**：
+- Train/validation: mixed closed-set (yes/no) + open-set questions
+- Test: auto-routed by question type into closed-set and open-set evaluation pipelines
 
-- VQA-RAD：https://huggingface.co/datasets/flaviagiammarino/vqa-rad
-- SLAKE-VQA：https://huggingface.co/datasets/mdwiratathya/SLAKE-vqa-english
-- PMC-VQA-test-clean：https://huggingface.co/datasets/RadGenome/PMC-VQA （使用其 `test-clean` 子集）
+Dataset links:
 
-## 🧪 实验设置（可复现）
+- VQA-RAD: https://huggingface.co/datasets/flaviagiammarino/vqa-rad
+- SLAKE-VQA: https://huggingface.co/datasets/mdwiratathya/SLAKE-vqa-english
+- PMC-VQA-test-clean: https://huggingface.co/datasets/RadGenome/PMC-VQA (`test-clean` split)
 
-### 实验组合
+## Experimental Setup (Reproducible)
 
-共 **12 个主实验** + 跨数据集泛化测试：
+### Experiment Matrix
 
-- `2 个模型 × 3 种 PEFT × 2 个数据集`
+12 main experiments + cross-dataset generalization:
 
-### 训练配置
+- `2 backbones x 3 PEFT methods x 2 datasets`
 
-- 数据划分：**遵循数据集官方划分** —— SLAKE 使用官方 `train / validation / test`；VQA-RAD 官方仅提供 `train / test`，从 `train` 中按固定随机种子（`seed=42`）抽取 10% 作为 `validation`，以保证可复现与跨论文可比
-- Epochs：3-5
-- Learning Rate：2e-4
-- Batch Size：1 + Gradient Accumulation：8
-- Optimizer：paged_adamw_32bit
-- Mixed Precision：FP16 / BF16
-- Quantization：NF4 4-bit
-- 硬件：单卡 NVIDIA RTX 4090（24GB）
+### Training Configuration
 
-### 跨数据集泛化测试（PMC-VQA-test-clean）
+- Data split policy:
+  - SLAKE uses official `train / validation / test`
+  - VQA-RAD provides `train / test`; we split 10% from training as validation with fixed `seed=42`
+- Epochs: 3-5
+- Learning rate: 2e-4
+- Batch setup: batch size 1 + gradient accumulation 8
+- Optimizer: paged_adamw_32bit
+- Mixed precision: FP16 / BF16
+- Quantization: NF4 4-bit
+- Hardware: single NVIDIA RTX 4090 (24GB)
 
-在 12 个主实验训练完成的检查点基础上，使用 **PMC-VQA-test-clean** 进行 zero-shot / few-shot 推理，衡量模型跨数据源（VQA-RAD / SLAKE → PubMed 文献图）的泛化能力与幻觉漂移。评估指标与主实验对齐（Accuracy / POPE / Keyword Recall / GPT-5 Judge）。
+### Cross-Dataset Evaluation on PMC-VQA-test-clean
 
-## 📏 评价指标（多维度）
+After the 12 main training runs, checkpoints are evaluated on PMC-VQA-test-clean in zero-shot/few-shot mode to measure distribution-shift robustness and hallucination drift.
 
-### 封闭式问题（Closed-set / Yes-No）
+Metrics stay aligned with main experiments: Accuracy / POPE / Keyword Recall / GPT-5 Judge.
 
-- **Accuracy**（准确率）
-- **Med-POPE Hallucination Rate**（对象幻觉率，POPE 在医学场景下的适配版）
-  - **构造方式**：从 VQA-RAD / SLAKE 的封闭式 QA 中抽取"是否存在某解剖结构 / 病灶"的 Yes/No 问句，并按 POPE 原始协议重构三档负样本：
-    - **Random**：随机替换为训练集中未出现的对象 / 解剖结构
-    - **Popular**：替换为在数据集中高频出现的解剖结构
-    - **Adversarial**：替换为与原对象解剖学共现频率最高的"最易混淆"结构（重点报告）
-  - **公式**：
-    `Hallucination Rate = P(Answer=Yes | GT=No) = FP / (FP + TN)`
-    即：在所有正确答案为 "No" 的样本中，模型回答 "Yes" 的比例
+## Evaluation Metrics
 
-### 开放式问题（Open-set）
+### Closed-Set Questions (Yes/No)
 
-- **Keyword Recall**
+- Accuracy
+- Med-POPE hallucination rate:
+  - Constructed from yes/no anatomy/lesion existence questions
+  - Three negative-sample settings:
+    - Random: random unseen object replacement
+    - Popular: high-frequency anatomy replacement
+    - Adversarial: highest co-occurrence and most confusable anatomy replacement
+
+Formula:
+
+`Hallucination Rate = P(Answer=Yes | GT=No) = FP / (FP + TN)`
+
+### Open-Set Questions
+
+- Keyword Recall
 
 \[
-\text{Keyword Recall} = \frac{\text{生成答案中命中的 GT 关键词数}}{\text{GT 关键词总数}}
+\text{Keyword Recall} = \frac{\text{# matched GT keywords in generated answer}}{\text{# total GT keywords}}
 \]
 
-- **GPT-5-as-a-Judge Semantic Score**（0-5 分）
-  - 使用医疗场景评分 Prompt，关注事实一致性、临床专业性与幻觉情况
+- GPT-5-as-a-Judge semantic score (0-5): factual consistency, clinical correctness, and hallucination behavior
 
-### 系统效率指标
+### System Efficiency Metrics
 
-- Training Time（秒）
-- Peak VRAM（GB）
-- Inference Speed（tokens/s 或 samples/s）
-- Eval / Test Loss
+- Training time (seconds)
+- Peak VRAM (GB)
+- Inference speed (tokens/s or samples/s)
+- Eval/test loss
 
-**所有指标可记录到 wandb 与 `results/` 目录。**
+All metrics can be tracked in Weights & Biases and exported to `results/`.
 
-## 🛠️ 当前仓库结构
+## Repository Structure
 
 ```text
 MedVQA/
@@ -198,53 +209,54 @@ MedVQA/
 ├── utils/
 ├── requirements.txt
 ├── README.md
+├── README.zh.md
 └── LICENSE
 ```
 
-## 🚀 快速开始
+## Quick Start
 
 ```bash
-# 1) 克隆仓库
+# 1) Clone
 git clone https://github.com/lkxgx/MedVQA.git
 cd MedVQA
 
-# 2) 安装依赖
+# 2) Install dependencies
 pip install -r requirements.txt
 
-# 3) 下载数据集
+# 3) Download datasets
 python scripts/download_datasets.py
 
-# 4) 下载模型
-#    注意：Gemma 系列需先在 HF 页面（https://huggingface.co/google/gemma-4-E4B-it）
-#    接受 Google 使用条款，并获取 Access Token。
+# 4) Download models
+#    Note: for Gemma, first accept Google terms on:
+#    https://huggingface.co/google/gemma-4-E4B-it
+#    then provide an access token.
 export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
 
 python scripts/download_models.py --model all --hf_token $HF_TOKEN
-# 或单独下载
+
+# Or download separately
 python scripts/download_models.py --model qwen3.5-9b
 python scripts/download_models.py --model gemma-4-e4b --hf_token $HF_TOKEN
 ```
 
-## 📈 实验结果
+## Results
 
-实验结果建议统一保存到 `results/`（CSV/Markdown/可视化报告）。
+It is recommended to store experiment outputs under `results/` (CSV, Markdown, and plots/reports).
 
-## 📜 引用
+## Citation
 
-本项目对应论文（投稿中）：
+Paper in submission:
 
-> 《Qwen3.5 与 Gemma-4 参数高效微调方法对比：LoRA、DoRA 与 PiSSA 在医疗视觉问答中的幻觉缓解与部署优化》
+> "Comparative PEFT Study of Qwen3.5 and Gemma-4 for Medical VQA: Hallucination Mitigation and Deployment Optimization with LoRA, DoRA, and PiSSA"
 
-**BibTeX**：发表后补充。
+BibTeX will be added after publication.
 
-## 🙏 致谢
+## Acknowledgments
 
-- 工具支持：Unsloth, Hugging Face, OpenAI
-- 数据集：VQA-RAD & SLAKE-VQA 官方维护者
+- Tooling: Unsloth, Hugging Face, OpenAI
+- Datasets: VQA-RAD and SLAKE-VQA maintainers
 
----
+Contributions, issues, and reproducibility discussions are welcome.
 
-欢迎 Star / Fork，欢迎 Issue 交流复现与改进建议。
-
-**作者**：Kaixuan（2026年4月）
-**联系**：3193888648@qq.com
+Author: Kaixuan (April 2026)
+Contact: 3193888648@qq.com

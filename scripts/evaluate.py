@@ -6,6 +6,7 @@ MedVQA-PEFT 项目完整评估脚本
 支持加载 Unsloth PEFT checkpoint，评估 VQA-RAD / SLAKE-VQA / PMC-VQA-test-clean
 """
 
+import unsloth
 import argparse
 import json
 import time

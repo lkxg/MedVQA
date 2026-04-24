@@ -47,6 +47,9 @@ models/
 *.hdf5
 logs/
 runs/
+unsloth_compiled_cache/
+wandb/
+outputs/
 
 # IDEs
 .vscode/

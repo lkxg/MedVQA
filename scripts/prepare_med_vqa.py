@@ -1,4 +1,3 @@
-# scripts/prepare_med_vqa_minimal.py
 import argparse
 from pathlib import Path
 from typing import Any, Dict, List
@@ -50,22 +49,31 @@ def build_user_prompt(question: str) -> str:
     )
 
 
-def convert_split(input_dir: Path, output_dir: Path, dataset_name: str, split: str):
-    ds = load_from_disk(str(input_dir))
-    columns = ds.column_names
+def resolve_source_columns(columns: List[str]) -> tuple[str, str, str]:
+    # Prefer strict mapping when dataset schema is fixed.
+    if all(col in columns for col in ["image", "question", "answer"]):
+        return "image", "question", "answer"
 
     image_col = find_first_existing(columns, ["image", "img", "image_file", "image_path", "path"])
     question_col = find_first_existing(columns, ["question", "query", "prompt"])
     answer_col = find_first_existing(columns, ["answer", "answers", "label", "response"])
-    id_col = find_first_existing(columns, ["id", "qid", "question_id", "uid"], required=False)
+    return image_col, question_col, answer_col
 
-    def _map_fn(example: Dict[str, Any], idx: int):
+
+def convert_split(input_dir: Path, output_dir: Path, dataset_name: str, split: str):
+    ds = load_from_disk(str(input_dir))
+    columns = ds.column_names
+
+    image_col, question_col, answer_col = resolve_source_columns(columns)
+    print(
+        f"列映射: image->{image_col}, question->{question_col}, answer->{answer_col}"
+    )
+
+    def _map_fn(example: Dict[str, Any]):
         question = normalize_text(example.get(question_col))
         answer = normalize_text(example.get(answer_col))
-        sample_id = normalize_text(example.get(id_col)) if id_col else f"{dataset_name}-{split}-{idx}"
 
         return {
-            "id": sample_id,
             "messages": [
                 {
                     "role": "user",
@@ -94,7 +102,6 @@ def convert_split(input_dir: Path, output_dir: Path, dataset_name: str, split: s
 
     converted = ds.map(
         _map_fn,
-        with_indices=True,
         remove_columns=columns,
         desc=f"Converting {dataset_name}/{split}",
     )
@@ -106,7 +113,7 @@ def convert_split(input_dir: Path, output_dir: Path, dataset_name: str, split: s
 
 
 def main():
-    parser = argparse.ArgumentParser(description="极简版 Med-VQA 转视觉对话格式，仅保留 id/messages")
+    parser = argparse.ArgumentParser(description="极简版 Med-VQA 转视觉对话格式，仅保留 messages")
     parser.add_argument(
         "--dataset",
         type=str,

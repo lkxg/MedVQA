@@ -5,6 +5,7 @@ train_gemma4.py
 Gemma-4-E4B-IT 专用训练脚本（优化版）
 """
 
+import unsloth
 import argparse
 import wandb
 from pathlib import Path

@@ -1,3 +1,4 @@
+import unsloth
 import argparse
 import json
 import logging
@@ -46,19 +47,18 @@ def parse_args():
     parser.add_argument("--peft", type=str, choices=["lora", "dora", "pissa"], default="lora", help="使用的 PEFT 方法")
     parser.add_argument("--rank", type=int, default=16, help="LoRA 秩 (rank)")
     parser.add_argument("--lora_alpha", type=int, default=32, help="LoRA alpha 参数")
-    parser.add_argument("--lora_dropout", type=float, default=0.05, help="LoRA dropout 丢弃率")
+    parser.add_argument("--lora_dropout", type=float, default=0.0, help="LoRA dropout 丢弃率")
 
     # 训练参数
-    parser.add_argument("--batch_size", type=int, default=1, help="每个设备的训练批量大小")
-    parser.add_argument("--eval_batch_size", type=int, default=1, help="每个设备的评估批量大小")
+    parser.add_argument("--batch_size", type=int, default=2, help="每个设备的训练批量大小")
+    parser.add_argument("--eval_batch_size", type=int, default=2, help="每个设备的评估批量大小")
     parser.add_argument("--grad_accum", type=int, default=8, help="梯度累积步数")
-    parser.add_argument("--epochs", type=int, default=2, help="训练轮数 (epochs)")
+    parser.add_argument("--epochs", type=int, default=1, help="训练轮数 (epochs)")
     parser.add_argument("--max_steps", type=int, default=-1, help="最大训练步数（-1 表示使用 epochs）")
-    parser.add_argument("--warmup_ratio", type=float, default=0.03, help="预热比例 (warmup ratio)")
     parser.add_argument("--learning_rate", type=float, default=2e-4, help="峰值学习率")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="优化器的权重衰减 (weight decay)")
-    parser.add_argument("--logging_steps", type=int, default=50, help="日志记录的步数间隔")
-    parser.add_argument("--save_total_limit", type=int, default=2, help="保存的检查点 (checkpoints) 最大数量")
+    parser.add_argument("--logging_steps", type=int, default=10, help="日志记录的步数间隔")
+    parser.add_argument("--save_total_limit", type=int, default=3, help="保存的检查点 (checkpoints) 最大数量")
     parser.add_argument("--max_seq_length", type=int, default=1024, help="序列的最大上下文长度")
     parser.add_argument("--seed", type=int, default=3407, help="控制可重复性的随机种子")
 
@@ -126,7 +126,7 @@ def validate_messages(messages: list[Dict[str, Any]]) -> None:
 
 def validate_dataset(ds, name: str) -> None:
     """验证加载的数据集包含必需的列并且各个项目的格式正确。"""
-    required_columns = {"id", "messages"}
+    required_columns = {"messages"}
     actual_columns = set(ds.column_names)
 
     if required_columns - actual_columns:
@@ -142,7 +142,9 @@ def validate_dataset(ds, name: str) -> None:
 def preview_sample(ds, title: str) -> None:
     """安全地显示一条样本预览，避免将繁重的原始图像对象打印到标准输出导致的错误。"""
     sample = ds[0]
-    safe_preview = {"id": sample.get("id"), "messages": []}
+    safe_preview = {"messages": []}
+    if "id" in sample:
+        safe_preview["id"] = sample.get("id")
 
     for msg in sample["messages"]:
         safe_msg = {"role": msg["role"], "content": []}
@@ -181,7 +183,7 @@ def apply_peft(model, args):
         random_state=args.seed,
         use_rslora=False,
         loftq_config=None,
-        target_modules="all-linear",
+        # target_modules="all-linear",
     )
 
     if args.peft == "lora":
@@ -280,7 +282,7 @@ def main():
             per_device_train_batch_size=args.batch_size,
             per_device_eval_batch_size=args.eval_batch_size,
             gradient_accumulation_steps=args.grad_accum,
-            warmup_ratio=args.warmup_ratio,
+            warmup_steps=15,
             num_train_epochs=args.epochs,
             max_steps=args.max_steps,
             learning_rate=args.learning_rate,
@@ -289,12 +291,14 @@ def main():
             logging_steps=args.logging_steps,
             optim="adamw_8bit",
             weight_decay=args.weight_decay,
-            lr_scheduler_type="linear",
+            lr_scheduler_type="cosine",
             seed=args.seed,
             output_dir=str(output_dir),
             report_to=report_to,
-            save_strategy="epoch",
-            eval_strategy="epoch",
+            save_strategy="steps",
+            eval_strategy="steps",
+            save_steps=25,
+            eval_steps=25,
             load_best_model_at_end=True,
             metric_for_best_model="eval_loss",
             greater_is_better=False,

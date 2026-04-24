@@ -1,4 +1,5 @@
 # scripts/test_infer_processed_qwen35.py
+import unsloth
 from datasets import load_from_disk
 from unsloth import FastVisionModel
 

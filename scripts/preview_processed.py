@@ -1,10 +1,11 @@
 # scripts/preview_processed.py
 import argparse
+import io
 import json
 from pathlib import Path
-from typing import Any, Dict, List
 
 from datasets import load_from_disk
+from PIL import Image
 
 
 DATASET_ALIASES = {
@@ -13,94 +14,41 @@ DATASET_ALIASES = {
 }
 
 
-def image_info(image_obj: Any) -> Dict[str, Any]:
-    info = {
-        "python_type": str(type(image_obj)),
-    }
+def list_available_processed(data_root: Path) -> None:
+    print(f"processed 根目录: {data_root}")
+    if not data_root.exists():
+        print("目录不存在")
+        return
 
-    if image_obj is None:
-        info["is_none"] = True
-        return info
+    found_any = False
+    for dataset_dir in sorted([p for p in data_root.iterdir() if p.is_dir()]):
+        splits = [p.name for p in sorted(dataset_dir.iterdir()) if p.is_dir()]
+        if splits:
+            found_any = True
+            print(f"- {dataset_dir.name}: {', '.join(splits)}")
 
-    try:
-        if hasattr(image_obj, "size"):
-            info["size"] = image_obj.size
-        if hasattr(image_obj, "mode"):
-            info["mode"] = image_obj.mode
-        if hasattr(image_obj, "filename"):
-            info["filename"] = image_obj.filename
-    except Exception as e:
-        info["inspect_error"] = str(e)
-
-    if isinstance(image_obj, dict):
-        info["keys"] = list(image_obj.keys())
-        if "path" in image_obj:
-            info["path"] = image_obj["path"]
-        if "bytes" in image_obj:
-            b = image_obj["bytes"]
-            info["bytes_len"] = len(b) if b is not None else None
-
-    return info
+    if not found_any:
+        print("未发现可用的数据集 split 目录")
 
 
-def sanitize_content_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    item_type = item.get("type", "unknown")
+def resolve_data_path(
+    data_root: Path,
+    dataset: str | None,
+    split: str,
+    data_path_arg: str | None,
+) -> Path:
+    if data_path_arg:
+        data_path = Path(data_path_arg)
+    else:
+        if dataset is None:
+            raise ValueError("未指定 --data_path 时，必须提供 --dataset")
+        folder = DATASET_ALIASES[dataset]
+        data_path = data_root / folder / split
 
-    if item_type == "image":
-        image_obj = item.get("image", None)
-        return {
-            "type": "image",
-            "image": "<IMAGE_OBJECT>",
-            "image_info": image_info(image_obj),
-        }
+    if not data_path.exists():
+        raise FileNotFoundError(f"找不到 processed 数据目录: {data_path}")
 
-    if item_type == "text":
-        return {
-            "type": "text",
-            "text": item.get("text", ""),
-        }
-
-    safe_item = {"type": item_type}
-    for k, v in item.items():
-        if k == "image":
-            safe_item["image"] = "<IMAGE_OBJECT>" if v is not None else None
-        else:
-            safe_item[k] = v
-    return safe_item
-
-
-def sanitize_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    safe_messages = []
-    for msg in messages:
-        safe_messages.append({
-            "role": msg.get("role", ""),
-            "content": [sanitize_content_item(x) for x in msg.get("content", [])],
-        })
-    return safe_messages
-
-
-def extract_quick_view(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-    user_texts = []
-    assistant_texts = []
-    image_count = 0
-
-    for msg in messages:
-        role = msg.get("role", "")
-        for item in msg.get("content", []):
-            if item.get("type") == "image":
-                image_count += 1
-            elif item.get("type") == "text":
-                text = item.get("text", "")
-                if role == "user":
-                    user_texts.append(text)
-                elif role == "assistant":
-                    assistant_texts.append(text)
-
-    return {
-        "user_text": "\n".join(user_texts).strip(),
-        "assistant_text": "\n".join(assistant_texts).strip(),
-        "image_count": image_count,
-    }
+    return data_path
 
 
 def preview_sample(ds, index: int):
@@ -108,30 +56,53 @@ def preview_sample(ds, index: int):
         raise IndexError(f"index 越界: {index}, 数据集大小为 {len(ds)}")
 
     sample = ds[index]
-    sample_id = sample.get("id", f"sample-{index}")
-    messages = sample.get("messages", [])
-    quick = extract_quick_view(messages)
+    messages = []
+    for msg in sample.get("messages", []):
+        safe_msg = {
+            "role": msg.get("role"),
+            "content": [],
+        }
+        for item in msg.get("content", []):
+            if item.get("type") == "image":
+                raw_image = item.get("image")
+                image_value = "<IMAGE_OBJECT>"
 
-    preview = {
-        "dataset_columns": ds.column_names,
-        "id": sample_id,
-        "quick_view": quick,
-        "messages": sanitize_messages(messages),
-    }
+                if isinstance(raw_image, dict):
+                    if raw_image.get("bytes") is not None:
+                        try:
+                            img = Image.open(io.BytesIO(raw_image["bytes"]))
+                            image_value = f"<PIL.Image mode={img.mode} size={img.size}>"
+                        except Exception:
+                            image_value = "<IMAGE_BYTES>"
+                    elif raw_image.get("path"):
+                        image_value = f"<IMAGE_PATH:{raw_image['path']}>"
+                elif raw_image is not None:
+                    image_value = str(raw_image)
 
-    print("=" * 100)
-    print(f"样本索引: {index}")
-    print(json.dumps(preview, ensure_ascii=False, indent=2, default=str))
-    print("=" * 100)
+                safe_msg["content"].append({
+                    "type": "image",
+                    "image": image_value,
+                })
+            else:
+                if item.get("type") == "text":
+                    safe_msg["content"].append({
+                        "type": "text",
+                        "text": item.get("text", ""),
+                    })
+                else:
+                    safe_msg["content"].append(item)
+        messages.append(safe_msg)
+
+    print(json.dumps({"messages": messages}, ensure_ascii=False, indent=2, default=str))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="预览 processed_minimal 后的视觉对话数据")
+    parser = argparse.ArgumentParser(description="预览 processed 后的视觉对话数据")
     parser.add_argument(
         "--dataset",
         type=str,
         choices=["VQA-RAD", "SLAKE-VQA"],
-        required=True,
+        default=None,
         help="数据集名称",
     )
     parser.add_argument(
@@ -148,6 +119,17 @@ def main():
         help="processed 数据根目录",
     )
     parser.add_argument(
+        "--data_path",
+        type=str,
+        default=None,
+        help="直接指定要预览的 split 路径，例如 data/processed/vqa-rad/train",
+    )
+    parser.add_argument(
+        "--list_available",
+        action="store_true",
+        help="列出 data_root 下可用的数据集和 split",
+    )
+    parser.add_argument(
         "--index",
         type=int,
         default=0,
@@ -161,17 +143,19 @@ def main():
     )
     args = parser.parse_args()
 
-    folder = DATASET_ALIASES[args.dataset]
-    data_path = Path(args.data_root) / folder / args.split
+    data_root = Path(args.data_root)
+    if args.list_available:
+        list_available_processed(data_root)
+        return
 
-    if not data_path.exists():
-        raise FileNotFoundError(f"找不到 processed 数据目录: {data_path}")
+    data_path = resolve_data_path(
+        data_root=data_root,
+        dataset=args.dataset,
+        split=args.split,
+        data_path_arg=args.data_path,
+    )
 
     ds = load_from_disk(str(data_path))
-
-    print(f"数据路径: {data_path}")
-    print(f"样本总数: {len(ds)}")
-    print(f"字段列表: {ds.column_names}")
 
     end_index = min(args.index + args.num_samples, len(ds))
     for idx in range(args.index, end_index):
